@@ -103,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/reqeng-mcp
+      url: https://pypi.org/p/pvliesdonk-reqeng-mcp
 
     permissions:
       id-token: write
