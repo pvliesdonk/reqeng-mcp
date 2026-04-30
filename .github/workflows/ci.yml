@@ -1,0 +1,220 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --all-groups
+
+      - name: Run ruff check
+        run: uv run ruff check src/ tests/
+
+      - name: Run ruff format check
+        run: uv run ruff format --check src/ tests/
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --all-groups
+
+      - name: Run mypy
+        run: uv run mypy src/ tests/
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental || false }}
+    permissions:
+      contents: read
+      statuses: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.11"
+            experimental: false
+          - python-version: "3.12"
+            experimental: false
+          - python-version: "3.13"
+            experimental: false
+          - python-version: "3.14"
+            experimental: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --all-groups
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v6
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          override_pr: ${{ github.event.pull_request.number }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Fetch base branch for diff-cover
+        if: matrix.python-version == '3.13' && github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }} --depth=50
+
+      - name: Check patch coverage
+        id: diffcover
+        if: matrix.python-version == '3.13' && github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Check if PR has Python source changes
+          HAS_PY=$(git diff --name-only "origin/${BASE_REF}...HEAD" | grep -c '\.py$' || true)
+          if [ "$HAS_PY" -eq 0 ]; then
+            echo "state=success" >> "$GITHUB_OUTPUT"
+            echo "description=Coverage not affected" >> "$GITHUB_OUTPUT"
+            echo "No Python source changes — skipping diff-cover"
+          else
+            OUTPUT=$(uv run diff-cover coverage.xml --compare-branch="origin/${BASE_REF}" --fail-under=80 2>&1) && RC=0 || RC=$?
+            echo "$OUTPUT"
+            TOTAL=$(echo "$OUTPUT" | grep -oP 'Total:\s+\K[\d.]+' || true)
+            if [ -z "$TOTAL" ] && [ "$RC" -ne 0 ]; then
+              echo "state=error" >> "$GITHUB_OUTPUT"
+              echo "description=diff-cover failed to compute patch coverage" >> "$GITHUB_OUTPUT"
+            elif [ -z "$TOTAL" ]; then
+              echo "state=success" >> "$GITHUB_OUTPUT"
+              echo "description=No coverable lines in diff" >> "$GITHUB_OUTPUT"
+            elif [ "$RC" -eq 0 ]; then
+              echo "state=success" >> "$GITHUB_OUTPUT"
+              echo "description=Patch coverage: ${TOTAL}%" >> "$GITHUB_OUTPUT"
+            else
+              echo "state=failure" >> "$GITHUB_OUTPUT"
+              echo "description=Patch coverage: ${TOTAL}% (minimum 80%)" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Save patch coverage result
+        if: matrix.python-version == '3.13' && github.event_name == 'pull_request'
+        env:
+          PATCH_STATE: ${{ steps.diffcover.outputs.state || 'error' }}
+          PATCH_DESC: ${{ steps.diffcover.outputs.description || 'diff-cover step did not run' }}
+        run: |
+          jq -n --arg state "$PATCH_STATE" --arg description "$PATCH_DESC" \
+            '{"state":$state,"description":$description}' > patch-coverage.json
+
+      - name: Upload patch coverage artifact
+        if: matrix.python-version == '3.13' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: patch-coverage
+          path: patch-coverage.json
+          retention-days: 1
+
+      - name: Post codecov/patch status
+        # Fork PRs: GITHUB_TOKEN is read-only for pull_request events from forks regardless
+        # of the permissions block — GitHub security restriction. continue-on-error prevents
+        # the job from failing; coverage-status.yml posts the status via workflow_run instead.
+        if: matrix.python-version == '3.13' && github.event_name == 'pull_request' && always()
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          PATCH_STATE: ${{ steps.diffcover.outputs.state }}
+          PATCH_DESC: ${{ steps.diffcover.outputs.description }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const state = process.env.PATCH_STATE || 'error';
+            const description = process.env.PATCH_DESC || 'diff-cover step did not run';
+            const headSha = context.payload.pull_request.head.sha;
+            core.info(`Posting codecov/patch: ${state} — ${description} to ${headSha}`);
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: headSha,
+              state,
+              context: 'codecov/patch',
+              description,
+              target_url: 'https://app.codecov.io/gh/pvliesdonk/reqeng-mcp',
+            });
+
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Export dependency list (excluding local project)
+        # `dev` is uv's only auto-activated default group, so --no-default-groups
+        # excludes it; `docs` is non-default and never exported unless explicitly
+        # requested via --group/--all-groups (neither passed here). Net effect:
+        # only runtime + user-defined extras land in the audit input — avoids
+        # spurious CVE reports against tooling (pip-audit's own `pip` dep, etc.)
+        # that does not run in production.
+        run: uv export --all-extras --no-default-groups --frozen --no-emit-project --no-hashes -o ${{ runner.temp }}/requirements.txt
+
+      - name: Run pip-audit
+        run: uvx pip-audit --strict --progress-spinner off -r ${{ runner.temp }}/requirements.txt
+
+  secrets:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

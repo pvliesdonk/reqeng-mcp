@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.4",
+  "name": "reqeng-mcp",
+  "display_name": "Requirements Engineering MCP",
+  "version": "${VERSION}",
+  "description": "MCP server for requirements engineering workflows (StrictDoc-backed).",
+  "long_description": "MCP server for requirements engineering workflows (StrictDoc-backed).",
+  "author": {
+    "name": "pvliesdonk",
+    "url": "https://github.com/pvliesdonk"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pvliesdonk/reqeng-mcp.git"
+  },
+  "homepage": "https://pvliesdonk.github.io/reqeng-mcp/",
+  "documentation": "https://pvliesdonk.github.io/reqeng-mcp/",
+  "support": "https://github.com/pvliesdonk/reqeng-mcp/issues",
+  "license": "UNLICENSED",
+  "keywords": [],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uvx",
+      "args": ["--from", "pvliesdonk-reqeng-mcp[all]==${VERSION}", "reqeng-mcp", "serve"],
+      "env": {
+        "REQENG_MCP_SERVER_NAME": "${user_config.server_name}",
+        "REQENG_MCP_READ_ONLY":   "${user_config.read_only}",
+        "FASTMCP_LOG_LEVEL":            "${user_config.log_level}"
+      }
+    }
+  },
+  "user_config": {
+    "server_name": {
+      "type": "string",
+      "title": "Server name",
+      "description": "Name shown in the Claude tool list.",
+      "required": false,
+      "default": "reqeng-mcp"
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only mode",
+      "description": "When true, write-tagged tools are hidden.",
+      "required": false,
+      "default": true
+    },
+    "log_level": {
+      "type": "string",
+      "title": "Log level",
+      "description": "One of: DEBUG, INFO, WARNING, ERROR.",
+      "required": false,
+      "default": "INFO"
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.11,<4.0"
+    }
+  }
+}

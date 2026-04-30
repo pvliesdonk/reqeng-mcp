@@ -1,0 +1,101 @@
+site_name: reqeng-mcp
+site_url: https://pvliesdonk.github.io/reqeng-mcp/
+site_description: MCP server for requirements engineering workflows (StrictDoc-backed).
+repo_url: https://github.com/pvliesdonk/reqeng-mcp
+repo_name: pvliesdonk/reqeng-mcp
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  # Generates llms.txt + llms-full.txt for the README badge.
+  # Sections mirror `nav:` below — keep them aligned when customising.
+  # `guides/*.md` and `deployment/*.md` use globs deliberately so new pages
+  # in those directories are auto-indexed without a sections-list update.
+  - llmstxt:
+      full_output: llms-full.txt
+      sections:
+        Getting Started:
+          - index.md
+          - installation.md
+          - configuration.md
+        Guides:
+          - guides/*.md
+        MCP Interface:
+          - tools/index.md
+          - prompts.md
+        Deployment:
+          - deployment/*.md
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_bases: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            docstring_style: google
+            merge_init_into_class: true
+            show_if_no_docstring: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: false
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: installation.md
+      - Configuration: configuration.md
+  - Guides:
+      - Authentication: guides/authentication.md
+      - File Exchange: guides/file-exchange.md
+  - MCP Interface:
+      - Tools: tools/index.md
+      - Prompts: prompts.md
+  - Deployment:
+      - Docker: deployment/docker.md
+      - OIDC Authentication: deployment/oidc.md

@@ -1,0 +1,172 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pvliesdonk/reqeng-mcp",
+  "title": "Requirements Engineering MCP",
+  "description": "MCP server for requirements engineering workflows (StrictDoc-backed).",
+  "version": "0.1.0",
+  "websiteUrl": "https://pvliesdonk.github.io/reqeng-mcp/",
+  "repository": {
+    "url": "https://github.com/pvliesdonk/reqeng-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "pvliesdonk-reqeng-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FASTMCP_LOG_LEVEL",
+          "description": "Log level (DEBUG, INFO, WARNING, ERROR)",
+          "default": "INFO",
+          "choices": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR"
+          ]
+        },
+        {
+          "name": "REQENG_MCP_SERVER_NAME",
+          "description": "MCP server name shown to clients",
+          "default": "reqeng-mcp"
+        },
+        {
+          "name": "REQENG_MCP_BEARER_TOKEN",
+          "description": "Bearer token for authentication",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_AUTH_MODE",
+          "description": "OIDC auth mode: 'remote' (JWKS validation) or 'oidc-proxy' (OAuth proxy). Auto-detected if not set."
+        },
+        {
+          "name": "REQENG_MCP_BASE_URL",
+          "description": "Public base URL of this server (required for OIDC)"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CONFIG_URL",
+          "description": "OIDC discovery endpoint URL"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CLIENT_ID",
+          "description": "OIDC client ID"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CLIENT_SECRET",
+          "description": "OIDC client secret",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_OIDC_JWT_SIGNING_KEY",
+          "description": "Signing key for OIDC session JWTs (critical on Linux/Docker)",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_OIDC_AUDIENCE",
+          "description": "Expected OIDC token audience"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_REQUIRED_SCOPES",
+          "description": "Space-separated required OIDC scopes",
+          "default": "openid"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/pvliesdonk/reqeng-mcp:v0.1.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:{--port}/mcp"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--port",
+          "default": "8000",
+          "description": "Port for the HTTP transport"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "FASTMCP_LOG_LEVEL",
+          "description": "Log level (DEBUG, INFO, WARNING, ERROR)",
+          "default": "INFO",
+          "choices": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR"
+          ]
+        },
+        {
+          "name": "REQENG_MCP_EVENT_STORE_URL",
+          "description": "Event store backend for HTTP session persistence (file:///path or memory://)",
+          "default": "file:///data/state/events"
+        },
+        {
+          "name": "REQENG_MCP_SERVER_NAME",
+          "description": "MCP server name shown to clients",
+          "default": "reqeng-mcp"
+        },
+        {
+          "name": "PUID",
+          "description": "Run as this UID (Docker entrypoint)",
+          "format": "number",
+          "default": "1000"
+        },
+        {
+          "name": "PGID",
+          "description": "Run as this GID (Docker entrypoint)",
+          "format": "number",
+          "default": "1000"
+        },
+        {
+          "name": "REQENG_MCP_BEARER_TOKEN",
+          "description": "Bearer token for authentication",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_AUTH_MODE",
+          "description": "OIDC auth mode: 'remote' (JWKS validation) or 'oidc-proxy' (OAuth proxy). Auto-detected if not set."
+        },
+        {
+          "name": "REQENG_MCP_BASE_URL",
+          "description": "Public base URL of this server (required for OIDC)"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CONFIG_URL",
+          "description": "OIDC discovery endpoint URL"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CLIENT_ID",
+          "description": "OIDC client ID"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_CLIENT_SECRET",
+          "description": "OIDC client secret",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_OIDC_JWT_SIGNING_KEY",
+          "description": "Signing key for OIDC session JWTs (critical on Linux/Docker)",
+          "isSecret": true
+        },
+        {
+          "name": "REQENG_MCP_OIDC_AUDIENCE",
+          "description": "Expected OIDC token audience"
+        },
+        {
+          "name": "REQENG_MCP_OIDC_REQUIRED_SCOPES",
+          "description": "Space-separated required OIDC scopes",
+          "default": "openid"
+        }
+      ]
+    }
+  ]
+}

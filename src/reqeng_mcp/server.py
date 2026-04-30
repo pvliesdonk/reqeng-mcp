@@ -1,0 +1,112 @@
+"""Requirements Engineering MCP — FastMCP server entry point.
+
+Composes the primitives from ``fastmcp-pvl-core`` into a
+project-specific ``make_server()``.  See
+https://gofastmcp.com/servers for the FastMCP server surface and
+``fastmcp-pvl-core``'s README for the composable helpers used below.
+"""
+
+from __future__ import annotations
+
+import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+from fastmcp import FastMCP
+from fastmcp_pvl_core import (
+    ServerConfig,  # noqa: F401  — re-exported for downstream projects' convenience
+    build_auth,
+    build_event_store,  # noqa: F401  — re-exported for downstream projects' convenience
+    build_instructions,
+    configure_logging_from_env,
+    register_file_exchange,
+    resolve_auth_mode,
+    wire_middleware_stack,
+)
+
+from reqeng_mcp._server_apps import register_apps
+from reqeng_mcp._server_deps import server_lifespan
+from reqeng_mcp.config import ProjectConfig
+from reqeng_mcp.prompts import register_prompts
+from reqeng_mcp.resources import register_resources
+from reqeng_mcp.tools import register_tools
+
+logger = logging.getLogger(__name__)
+
+_ENV_PREFIX = "REQENG_MCP"
+
+
+def make_server(
+    *,
+    transport: str = "stdio",
+    config: ProjectConfig | None = None,
+) -> FastMCP:
+    """Construct the Requirements Engineering MCP FastMCP server.
+
+    Args:
+        transport: ``"stdio"`` / ``"http"`` / ``"sse"``.  Used here for
+            logging only; MCP File Exchange wiring is gated by
+            ``register_file_exchange`` reading
+            ``REQENG_MCP_TRANSPORT`` / ``FASTMCP_TRANSPORT`` and
+            ``REQENG_MCP_FILE_EXCHANGE_ENABLED`` (default true on
+            HTTP/SSE, false on stdio).
+        config: Optional pre-loaded config; default loads from env.
+
+    Returns:
+        A configured :class:`fastmcp.FastMCP` instance.
+    """
+    config = config or ProjectConfig.from_env()
+    configure_logging_from_env()
+
+    auth = build_auth(config.server)
+    auth_mode = resolve_auth_mode(config.server) if auth is not None else "none"
+    if auth_mode == "none":
+        logger.warning(
+            "No auth configured — server accepts unauthenticated connections"
+        )
+    else:
+        logger.info("Auth enabled: mode=%s", auth_mode)
+
+    try:
+        pkg_ver = _pkg_version("pvliesdonk-reqeng-mcp")
+    except PackageNotFoundError:
+        pkg_ver = "unknown"
+
+    logger.info(
+        "Server config: version=%s name=reqeng-mcp transport=%s auth=%s",
+        pkg_ver,
+        transport,
+        auth_mode,
+    )
+
+    mcp = FastMCP(
+        name="reqeng-mcp",
+        instructions=build_instructions(
+            read_only=True,
+            env_prefix=_ENV_PREFIX,
+            domain_line="MCP server for requirements engineering workflows (StrictDoc-backed).",
+        ),
+        lifespan=server_lifespan,
+        auth=auth,
+    )
+
+    wire_middleware_stack(mcp)
+
+    register_tools(mcp)
+    register_resources(mcp)
+    register_prompts(mcp)
+    register_apps(mcp)
+
+    # To publish files from a tool body, capture the returned handle
+    # — see docs/guides/file-exchange.md for the module-level singleton
+    # pattern (e.g. ``_file_exchange = register_file_exchange(...)``).
+    register_file_exchange(
+        mcp,
+        namespace="reqeng-mcp",
+        env_prefix=_ENV_PREFIX,
+        transport="auto",
+        # produces=("application/octet-stream",),  # uncomment + customise per project
+        # consumer_sink=_my_sink,                  # uncomment if this server consumes file_refs
+    )
+
+    return mcp

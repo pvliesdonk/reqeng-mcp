@@ -1,0 +1,11 @@
+# Changes here will be overwritten by `copier update`.
+_commit: v1.2.1-5-ge1c1746
+_src_path: https://github.com/pvliesdonk/fastmcp-server-template
+docker_registry: ghcr.io/pvliesdonk
+domain_description: MCP server for requirements engineering workflows (StrictDoc-backed).
+env_prefix: REQENG_MCP
+github_org: pvliesdonk
+human_name: Requirements Engineering MCP
+project_name: reqeng-mcp
+pypi_name: pvliesdonk-reqeng-mcp
+python_module: reqeng_mcp

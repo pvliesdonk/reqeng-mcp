@@ -1,0 +1,115 @@
+"""Smoke tests for Requirements Engineering MCP."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastmcp import Client
+
+from reqeng_mcp._server_apps import register_apps
+from reqeng_mcp.server import make_server
+
+
+def test_make_server_constructs() -> None:
+    """make_server() returns a FastMCP instance without raising."""
+    server = make_server()
+    assert server is not None
+
+
+def test_register_apps_logs_when_app_domain_set(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """register_apps logs the configured app domain when the env var is set.
+
+    Covers the ``if app_domain:`` branch of ``_server_apps.register_apps``,
+    which the default smoke tests miss because no ``REQENG_MCP_APP_DOMAIN``
+    is set in the test env.  Pass a real ``FastMCP`` instance so the test
+    keeps working if a downstream maintainer adds real registrations to the
+    branch (the scaffold's no-op branch ignores the argument today).
+    """
+    monkeypatch.setenv("REQENG_MCP_APP_DOMAIN", "example.com")
+    with caplog.at_level("INFO", logger="reqeng_mcp._server_apps"):
+        register_apps(make_server())
+    assert any("example.com" in r.message for r in caplog.records)
+
+
+async def test_status_resource_reports_ready(client: Client[Any]) -> None:
+    """The example ``status://`` resource reports a started service.
+
+    The lifespan calls ``service.start()``, so the resource payload must
+    contain ``ready: true`` — asserting the value (not just the key name)
+    catches a future regression where the lifespan stops starting the
+    service.
+    """
+    result = await client.read_resource("status://reqeng-mcp")
+    first = result[0]
+    assert hasattr(first, "text"), (
+        f"expected text resource content, got {type(first).__name__}"
+    )
+    assert json.loads(first.text) == {"ready": True}
+
+
+async def test_summarize_prompt_includes_context(client: Client[Any]) -> None:
+    """The example ``summarize`` prompt round-trips its ``context`` argument."""
+    result = await client.get_prompt("summarize", {"context": "hello world"})
+    content = result.messages[0].content
+    assert hasattr(content, "text"), (
+        f"expected text prompt content, got {type(content).__name__}"
+    )
+    assert "hello world" in content.text
+
+
+async def test_file_exchange_disabled_on_stdio_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stdio default omits file-exchange tools and capability.
+
+    Asserts the facade's transport-gating contract: with no
+    ``REQENG_MCP_FILE_EXCHANGE_ENABLED`` override and stdio
+    transport, neither ``create_download_link`` nor ``fetch_file`` is
+    registered, and ``MCP_EXCHANGE_DIR`` (deployer-controlled) is also
+    unset so the exchange-volume runtime stays disabled.
+    """
+    for var in (
+        "REQENG_MCP_FILE_EXCHANGE_ENABLED",
+        "REQENG_MCP_TRANSPORT",
+        "FASTMCP_TRANSPORT",
+        "MCP_EXCHANGE_DIR",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    server = make_server()
+    async with Client(server) as smoke_client:
+        tools = {t.name for t in await smoke_client.list_tools()}
+    assert "create_download_link" not in tools
+    assert "fetch_file" not in tools
+
+
+async def test_file_exchange_capability_when_http_and_exchange_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """HTTP transport + ``MCP_EXCHANGE_DIR`` registers the producer tool.
+
+    With ``transport=http`` resolved (via the env var) and an
+    exchange directory provided, ``register_file_exchange`` advertises
+    the producer side: ``create_download_link`` is registered when
+    ``REQENG_MCP_BASE_URL`` is set, and the exchange transfer
+    method activates because ``MCP_EXCHANGE_DIR`` resolves.
+    """
+    monkeypatch.setenv("REQENG_MCP_TRANSPORT", "http")
+    monkeypatch.setenv("REQENG_MCP_BASE_URL", "https://test.example.com")
+    monkeypatch.setenv("MCP_EXCHANGE_DIR", str(tmp_path))
+    monkeypatch.delenv("REQENG_MCP_FILE_EXCHANGE_ENABLED", raising=False)
+
+    server = make_server(transport="http")
+    async with Client(server) as smoke_client:
+        tools = {t.name for t in await smoke_client.list_tools()}
+    assert "create_download_link" in tools
+    # Consumer side stays off until the scaffold passes consumer_sink= to
+    # register_file_exchange — this assertion locks the default in.
+    assert "fetch_file" not in tools
