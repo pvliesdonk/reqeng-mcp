@@ -17,7 +17,7 @@ maintainer: "pvliesdonk <pvliesdonk@users.noreply.github.com>"
 description: |
   MCP server for requirements engineering workflows (StrictDoc-backed).
 homepage: "https://pvliesdonk.github.io/reqeng-mcp/"
-license: "Proprietary"  # starter: TODO update when you pick a license (see LICENSE)
+license: "MIT"
 
 # --- Package contents ---
 

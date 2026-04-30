@@ -16,7 +16,7 @@
   "homepage": "https://pvliesdonk.github.io/reqeng-mcp/",
   "documentation": "https://pvliesdonk.github.io/reqeng-mcp/",
   "support": "https://github.com/pvliesdonk/reqeng-mcp/issues",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": [],
   "server": {
     "type": "uv",
