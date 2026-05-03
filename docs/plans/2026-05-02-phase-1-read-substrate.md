@@ -183,6 +183,7 @@ def test_relation_with_role() -> None:
 
 def test_relation_without_role() -> None:
     rel = Relation(source_uid="REQ-002", target="REQ-001", relation_type="Parent")
+    assert rel.relation_type == "Parent"
     assert rel.role is None
 
 

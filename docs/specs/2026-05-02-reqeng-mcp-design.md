@@ -522,10 +522,12 @@ Test `tests/drift/test_discipline_consistency.py`:
 tests/
   conftest.py
   fixtures/
-    grammars/{default.sgra, with_safety_extension.sgra, malformed.sgra}
-    projects/{minimal/, multi-doc/, with-acl/}
-    bearer-tokens.toml
-    acls/{simple.toml, wildcard.toml, malformed.toml}
+    grammars/                       # default.sgra (Phase 1); with_safety_extension.sgra
+                                    # and malformed.sgra added in Phase 2 when grammar
+                                    # extension and write-error paths are exercised
+    projects/                       # minimal/ (Phase 1); multi-doc/ and with-acl/ in Phase 2
+    bearer-tokens.toml              # Phase 2 (auth tests)
+    acls/{simple.toml, wildcard.toml, malformed.toml}   # Phase 2 (ACL tests)
   unit/
   integration/
   contract/
