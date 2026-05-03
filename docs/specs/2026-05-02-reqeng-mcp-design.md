@@ -119,7 +119,10 @@ ELEMENTS:
   FIELDS:
   - TITLE: MID
     TYPE: String
-    REQUIRED: True
+    REQUIRED: False    # deviates from StrictDoc's L2 dogfood (which has REQUIRED: True);
+                       # we keep MID optional uniformly so substrate auto-assignment is
+                       # the only path that produces them and fixtures don't need to
+                       # carry hand-written MIDs on TEXT nodes.
   - TITLE: UID
     TYPE: String
     REQUIRED: False
@@ -185,7 +188,7 @@ Per-node "created_at / last_modified_at / who / why" is **not** declared in the 
 
 ### 4.6 Project-level config — `strictdoc_config.py`
 
-Each `<spec_root>/<project_id>/strictdoc_config.py` is a Python file (post-2025-Q4 StrictDoc migration; TOML deprecated, removal expected 2026-Q1). `create_project` generates a minimal default; users can edit to inject Python hooks into StrictDoc's traceability pipeline if needed.
+Each `<spec_root>/<project_id>/strictdoc_config.py` is a Python file. StrictDoc supports both Python config (canonical, post-2025-Q4 migration) and the legacy `strictdoc.toml` (deprecated, prints a warning); reqeng-mcp emits Python from day one to align with the upstream direction. `create_project` generates a minimal default; users can edit to inject Python hooks into StrictDoc's traceability pipeline if needed.
 
 ## 5. StrictDoc backend
 
@@ -197,9 +200,9 @@ The class exposes our-shape types — `Document`, `TraceabilityIndex`, `Grammar`
 
 ### 5.2 Internal touch points
 
-Verified against current StrictDoc main ([deepwiki query](https://deepwiki.com/search/list-the-actual-python-class-e_74de9af3-6b79-45d4-8b86-df3ba39257c4); StrictDoc explicitly notes "no formally documented public Python API, no guarantee of stability"):
+Identified via [deepwiki query](https://deepwiki.com/search/list-the-actual-python-class-e_74de9af3-6b79-45d4-8b86-df3ba39257c4) at design time; StrictDoc explicitly notes "no formally documented public Python API, no guarantee of stability." **The implementer MUST re-verify each touch point against the pinned StrictDoc version (0.20.0) at first import** rather than trusting the snapshot below — the deepwiki content is not under version control and may have drifted. Plan Task 1 Step 2 and Task 19 (`tests/strictdoc_pin/test_strictdoc_internals.py`) provide the verification path.
 
-| Operation | Internal entry point |
+| Operation | Internal entry point (verify at impl time) |
 |---|---|
 | Parse `.sdoc` | `strictdoc.backend.sdoc.reader.SDReader.read_from_file(path, project_config)` |
 | Serialise `.sdoc` | `strictdoc.backend.sdoc.writer.SDWriter.write_to_file(doc)` / `.write(doc)` |
@@ -299,7 +302,7 @@ No `upsert_node` — conflating create vs edit is a foot-gun for the LLM.
 |---|---|
 | `validate_project(project_id?, scope?)` | StrictDoc native validation — UID uniqueness, ref resolution, grammar conformance. |
 | `check_integrity(project_id?)` | Currently `== validate_project()`. Reserved seam for future invariants. |
-| `export_html(project_id?)` | StrictDoc HTML export → `file_ref` via existing file-exchange middleware (`server.py:103`). |
+| `export_html(project_id?)` | StrictDoc HTML export → `file_ref` via the existing file-exchange middleware wired through `register_file_exchange()` in `server.py`. |
 | `export_reqif(project_id?)` | StrictDoc ReqIF export → `file_ref`. |
 | `export_excel(project_id?)` | StrictDoc Excel export → `file_ref`. |
 | `export_markdown(project_id?)` | StrictDoc Markdown export → `file_ref`. |
@@ -461,7 +464,7 @@ Six steps, lives in `src/reqeng_mcp/prompt_content/authoring_loop.md`:
 
 ### 8.4 Server `instructions` blob (always loaded)
 
-Composed via `build_instructions()` (`server.py:84`). The `domain_line`, ~80 words:
+Composed via `build_instructions()` in `server.py`. The `domain_line`, ~80 words:
 
 > MCP server for requirements engineering workflows (StrictDoc-backed, multi-project, intent-tagged authoring). **Authoring loop:** orient → locate → read narrow → edit narrow with user-framed intent → trace dependents → integrity-check at logical boundary. Every write tool requires a non-placeholder `intent` argument that becomes the git commit message. Invoke prompt `authoring-loop` for the full discipline; `start-session` for project orientation; `worked-single-rule` / `worked-audit-pass` for templated walkthroughs.
 

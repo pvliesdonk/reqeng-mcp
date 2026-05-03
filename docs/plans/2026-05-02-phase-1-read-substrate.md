@@ -26,6 +26,7 @@
 | `grammar_resolver.py` | **NEW** | Four-step grammar resolution per spec §4.3 |
 | `git_strategy.py` | **NEW** | Adapted from `markdown-mcp/src/markdown_vault_mcp/git.py`; in Phase 1 only init/clone exercised |
 | `substrate.py` | **NEW** | Composition root: `Substrate` class holds `SpecStore` + `StrictDocBackend` cache + `git_strategy` factory |
+| `intent.py` | **NEW** | `validate_intent` helper (length floor, placeholder rejection); reused by Phase 2 write tools |
 | `config.py` | **MODIFY** | Add domain fields (between sentinels) per spec §3.2 |
 | `domain.py` | **MODIFY** | Replace `Service` placeholder with re-export of `Substrate` |
 | `_server_deps.py` | **MODIFY** | Lifespan instantiates `Substrate` from config |
@@ -40,8 +41,6 @@
 |---|---|---|
 | `conftest.py` | **MODIFY** | Add fixtures: `tmp_spec_root`, `minimal_project`, `multidoc_project`, `substrate`, `mcp_client` |
 | `fixtures/grammars/default.sgra` | **NEW** | Pinned copy of bundled default (drift detection) |
-| `fixtures/grammars/with_safety_extension.sgra` | **NEW** | ASIL-extended grammar fixture |
-| `fixtures/grammars/malformed.sgra` | **NEW** | Failure-path fixture |
 | `fixtures/projects/minimal/strictdoc_config.py` | **NEW** | Per spec §4.6 |
 | `fixtures/projects/minimal/spec/calculator.sdoc` | **NEW** | One document, two REQUIREMENTS, one Parent relation |
 | `fixtures/projects/multi-doc/strictdoc_config.py` | **NEW** | Per spec §4.6 |
@@ -50,6 +49,7 @@
 | `unit/test_strictdoc_backend.py` | **NEW** | StrictDocBackend wrapper tests |
 | `unit/test_grammar_resolution.py` | **NEW** | Four-path resolver tests |
 | `unit/test_substrate.py` | **NEW** | Composition root tests |
+| `unit/test_intent_validation.py` | **NEW** | `validate_intent` rules unit-tested independently of integration paths |
 | `integration/test_authoring_loop_readonly.py` | **NEW** | End-to-end read-only loop |
 | `integration/test_create_project.py` | **NEW** | Project lifecycle |
 | `integration/test_export_roundtrip.py` | **NEW** | All four exports against fixture |
@@ -73,15 +73,15 @@
 
 For reviewability, group commits into PR-sized milestones (each PR closes one tracking sub-issue under the Phase 1 epic):
 
-- **PR1** — Tasks 1–4 (foundation: deps, types, grammar, fixtures, SpecStore)
-- **PR2** — Tasks 5–7 (StrictDocBackend, GrammarResolver, git_strategy adaptation)
-- **PR3** — Tasks 8–9 (config + lifespan + Substrate composition)
-- **PR4** — Tasks 10–13 (read tools)
-- **PR5** — Tasks 14–15 (lifecycle + validation tools)
-- **PR6** — Tasks 16–17 (export tools + resources)
-- **PR7** — Tasks 18–20 (server integration + integration tests + docs)
+- **PR1** — Tasks 1–4 (foundation: deps, types, default grammar, fixtures, `SpecStore`, `StrictDocBackend` read+exports)
+- **PR2** — Tasks 5–7 (`GrammarResolver`, `git_strategy` adaptation, `Substrate` composition root)
+- **PR3** — Tasks 8–9 (`ProjectConfig` fields + lifespan wiring)
+- **PR4** — Tasks 10–13 (read tools: orient, nodes, search/history, validation)
+- **PR5** — Task 14 (project lifecycle: `create_project`, `archive_project`)
+- **PR6** — Task 15 (export tools)
+- **PR7** — Tasks 16–20 (resources, server `domain_line`, e2e test, contract + pin tests, docs)
 
-≤10 sub-issues per epic per CLAUDE.md cap.
+7 PRs, ≤10 sub-issues per epic per CLAUDE.md cap. (The PR ladder near the end of this plan and the Phase 1 epic checklist use the same numbering — keep them aligned in any future revisions.)
 
 ---
 
@@ -186,6 +186,15 @@ def test_relation_without_role() -> None:
     assert rel.role is None
 
 
+def test_relation_file_target() -> None:
+    rel = Relation(
+        source_uid="REQ-001",
+        target="src/calc.py",
+        relation_type="File",
+    )
+    assert rel.relation_type == "File"
+
+
 def test_grammar_listing() -> None:
     grammar = Grammar(
         source_path=Path("/tmp/grammar.sgra"),
@@ -266,7 +275,7 @@ class Relation:
 
     source_uid: str
     target: str  # UID for Parent; path for File
-    relation_type: Literal["Parent", "Child", "File"]
+    relation_type: Literal["Parent", "File"]
     role: str | None = None
 
 
@@ -368,7 +377,8 @@ ELEMENTS:
   FIELDS:
   - TITLE: MID
     TYPE: String
-    REQUIRED: True
+    REQUIRED: False    # deviation from StrictDoc L2 dogfood (which has REQUIRED: True);
+                       # see spec §4.2 — keeps MID assignment as a substrate-only path.
   - TITLE: UID
     TYPE: String
     REQUIRED: False
@@ -1252,6 +1262,13 @@ Refs design spec §6.5"
 - Create: `tests/unit/test_grammar_resolution.py`
 
 Implements the resolution order from spec §4.3: inline → project `.sgra` → env-default → bundled.
+
+**Inline-grammar interaction (assumption documented here so the implementer doesn't re-derive it):**
+
+- The inline check uses a substring scan for `[GRAMMAR]` in any `.sdoc` under `<project_root>/spec/`. False positives are possible if a STATEMENT body literally contains `[GRAMMAR]` at column 0 — acceptable for Phase 1; tighten to a column-0 / line-start regex if a real spec ever triggers it.
+- When the resolver returns `kind="inline"` it does NOT materialise `<project>/grammar.sgra` — StrictDoc reads the inline block directly and a redundant on-disk file would either be unused or, worse, conflict with the inline declaration.
+- When the resolver returns `kind="project" | "env_default" | "bundled"` it DOES materialise (copy or symlink) into `<project>/grammar.sgra` so subsequent `IMPORT_FROM_FILE` references resolve.
+- **If a user later adds an inline `[GRAMMAR]` to a document in a project that already has a materialised `grammar.sgra`, the user is responsible for deleting the stale on-disk file.** The substrate does not detect post-hoc transitions; trying to would create policy ambiguity (which source wins?). Documented in `docs/deployment/multi-project.md` (Task 20).
 
 - [ ] **Step 1: Write failing tests**
 
@@ -3008,10 +3025,149 @@ Refs design spec §6.5"
 ## Task 14: Project lifecycle tools — create_project, archive_project
 
 **Files:**
+- Create: `src/reqeng_mcp/intent.py` (new module — `_validate_intent` helper, reused by Phase 2 write tools)
+- Create: `tests/unit/test_intent_validation.py`
 - Modify: `src/reqeng_mcp/tools.py`
 - Create: `tests/integration/test_lifecycle.py`
 
-- [ ] **Step 1: Append `_register_lifecycle` to tools.py**
+The intent-validation rules (non-empty, length floor ≥ 10, placeholder rejection) are extracted into a standalone helper now so Phase 2's write tools (which all take `intent`) can reuse it without copy-paste, and so the rules are unit-tested independently from the integration paths.
+
+- [ ] **Step 1: Write the failing intent-validation tests**
+
+Create `tests/unit/test_intent_validation.py`:
+
+```python
+"""Tests for intent argument validation (spec §6.3, §8.2 anti-patterns)."""
+from __future__ import annotations
+
+import pytest
+
+from reqeng_mcp.intent import IntentValidationError, validate_intent
+
+
+def test_valid_intent_returns_normalised() -> None:
+    assert (
+        validate_intent("Add the divisor-zero invariant the user asked about.")
+        == "Add the divisor-zero invariant the user asked about."
+    )
+
+
+def test_strips_leading_trailing_whitespace() -> None:
+    assert (
+        validate_intent("  Add the divisor-zero invariant.  ")
+        == "Add the divisor-zero invariant."
+    )
+
+
+def test_collapses_internal_newlines_to_single_line() -> None:
+    assert (
+        validate_intent("Add the\ndivisor-zero invariant.")
+        == "Add the divisor-zero invariant."
+    )
+
+
+def test_rejects_empty() -> None:
+    with pytest.raises(IntentValidationError, match="empty"):
+        validate_intent("")
+
+
+def test_rejects_whitespace_only() -> None:
+    with pytest.raises(IntentValidationError, match="empty"):
+        validate_intent("   \n\t  ")
+
+
+def test_rejects_below_length_floor() -> None:
+    with pytest.raises(IntentValidationError, match="too short"):
+        validate_intent("too short")  # 9 chars
+
+
+def test_rejects_common_placeholders() -> None:
+    for placeholder in ("updated", "see above", "WIP", "fix", "tbd", "todo"):
+        with pytest.raises(IntentValidationError, match="placeholder"):
+            validate_intent(placeholder)
+
+
+def test_rejects_placeholder_case_insensitive() -> None:
+    with pytest.raises(IntentValidationError, match="placeholder"):
+        validate_intent("UPDATED")
+
+
+def test_rejects_none() -> None:
+    with pytest.raises(IntentValidationError):
+        validate_intent(None)  # type: ignore[arg-type]
+```
+
+- [ ] **Step 2: Run tests, verify they fail**
+
+```bash
+uv run pytest tests/unit/test_intent_validation.py -v
+```
+
+Expected: ImportError on `reqeng_mcp.intent`.
+
+- [ ] **Step 3: Implement `src/reqeng_mcp/intent.py`**
+
+```python
+"""Intent argument validation.
+
+Every write tool takes an `intent: str` argument that becomes the git
+commit message (spec §6.3). The substrate refuses empty, whitespace-only,
+or placeholder intents — that's the load-bearing enforcement of the
+pitch's "user-framed why" thesis.
+
+This helper is used by Phase 1 lifecycle tools (create_project,
+archive_project) and reused by Phase 2 write tools without modification.
+"""
+from __future__ import annotations
+
+_MIN_LENGTH = 10
+_PLACEHOLDERS = {
+    "updated", "update", "fix", "fixed", "wip", "work in progress",
+    "see above", "tbd", "todo", "n/a", "na", "none", "placeholder",
+    "test", "noop", "no-op",
+}
+
+
+class IntentValidationError(ValueError):
+    """Raised when a tool's `intent` argument is empty or placeholder-shaped."""
+
+
+def validate_intent(intent: str | None) -> str:
+    """Normalise and validate an intent string; return the cleaned form.
+
+    Rules:
+    - Non-None, non-empty after stripping.
+    - Length ≥ 10 chars after stripping.
+    - Not a known placeholder phrase (case-insensitive).
+    - Internal newlines/tabs collapsed to single spaces.
+    """
+    if intent is None:
+        raise IntentValidationError("intent is required (got None)")
+    cleaned = " ".join(intent.split())
+    if not cleaned:
+        raise IntentValidationError("intent must not be empty")
+    if len(cleaned) < _MIN_LENGTH:
+        raise IntentValidationError(
+            f"intent too short ({len(cleaned)} chars; minimum {_MIN_LENGTH}). "
+            "Articulate the user's 'why' in one sentence."
+        )
+    if cleaned.lower() in _PLACEHOLDERS:
+        raise IntentValidationError(
+            f"intent {cleaned!r} is a placeholder; describe the user's 'why' "
+            "in their framing rather than what you did"
+        )
+    return cleaned
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+uv run pytest tests/unit/test_intent_validation.py -v
+```
+
+Expected: all 9 tests pass.
+
+- [ ] **Step 5: Append `_register_lifecycle` to tools.py — using the helper**
 
 ```python
 def _register_lifecycle(mcp: FastMCP) -> None:
@@ -3034,12 +3190,9 @@ def _register_lifecycle(mcp: FastMCP) -> None:
         `intent` is required and becomes the initial commit message.
         """
         from reqeng_mcp.git_strategy import GitWriteStrategy
+        from reqeng_mcp.intent import validate_intent
 
-        if not intent or not intent.strip() or len(intent.strip()) < 10:
-            raise ValueError(
-                "intent must be a non-empty sentence describing why this "
-                "project is being created (min 10 chars)"
-            )
+        intent = validate_intent(intent)
         if project_id in substrate.spec_store.list_projects():
             raise ValueError(f"project {project_id!r} already exists")
         project_root = substrate.spec_store.root / project_id
@@ -3092,11 +3245,9 @@ def _register_lifecycle(mcp: FastMCP) -> None:
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
         """Move project to <spec_root>/archived/<project_id>/; project becomes read-only."""
-        if not intent or not intent.strip() or len(intent.strip()) < 10:
-            raise ValueError(
-                "intent must be a non-empty sentence describing why this "
-                "project is being archived (min 10 chars)"
-            )
+        from reqeng_mcp.intent import validate_intent
+
+        intent = validate_intent(intent)
         src = substrate.spec_store.get_project_path(project_id)
         archive_root = substrate.spec_store.root / "archived"
         archive_root.mkdir(exist_ok=True)
@@ -3111,7 +3262,7 @@ def _register_lifecycle(mcp: FastMCP) -> None:
 
 Add the call in `register_tools`.
 
-- [ ] **Step 2: Write the integration test**
+- [ ] **Step 6: Write the integration test**
 
 Create `tests/integration/test_lifecycle.py`:
 
@@ -3186,7 +3337,7 @@ async def test_archive_project(mcp_client, minimal_project, monkeypatch) -> None
     assert not (minimal_project / "minimal").exists()
 ```
 
-- [ ] **Step 3: Run tests, verify pass**
+- [ ] **Step 7: Run tests, verify pass**
 
 ```bash
 uv run pytest tests/integration/test_lifecycle.py -v
@@ -3194,19 +3345,22 @@ uv run pytest tests/integration/test_lifecycle.py -v
 
 Expected: all 4 tests pass.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/reqeng_mcp/tools.py tests/integration/test_lifecycle.py
-git commit -m "feat(tools): create_project, archive_project lifecycle tools
+git add src/reqeng_mcp/intent.py src/reqeng_mcp/tools.py tests/unit/test_intent_validation.py tests/integration/test_lifecycle.py
+git commit -m "feat(tools): create_project, archive_project + intent helper
 
+- src/reqeng_mcp/intent.py: validate_intent helper (non-empty, length
+  floor >=10, placeholder rejection, internal-whitespace normalisation);
+  reused unchanged by Phase 2 write tools
 - create_project: git init, strictdoc_config.py, grammar materialise,
-  initial commit using intent as the commit message; managed-mode
-  clone when remote_url given
+  initial commit using validated intent; managed-mode clone when
+  remote_url given
 - archive_project: move to <spec_root>/archived/<project_id>/
-- both reject placeholder intent (Phase 1 cap; spec §6.4)
+- intent validation rules unit-tested independently of integration paths
 
-Refs design spec §6.4"
+Refs design spec §6.3, §6.4, §8.2"
 ```
 
 ---
