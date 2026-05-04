@@ -1,5 +1,5 @@
 # Changes here will be overwritten by `copier update`.
-_commit: v1.2.1-5-ge1c1746
+_commit: v1.3.0
 _src_path: https://github.com/pvliesdonk/fastmcp-server-template
 docker_registry: ghcr.io/pvliesdonk
 domain_description: MCP server for requirements engineering workflows (StrictDoc-backed).

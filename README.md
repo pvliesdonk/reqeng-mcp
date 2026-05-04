@@ -1,6 +1,6 @@
 # Requirements Engineering MCP
 
-[![CI](https://github.com/pvliesdonk/reqeng-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pvliesdonk/reqeng-mcp/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/pvliesdonk/reqeng-mcp/graph/badge.svg)](https://codecov.io/gh/pvliesdonk/reqeng-mcp) [![PyPI](https://img.shields.io/pypi/v/pvliesdonk-reqeng-mcp)](https://pypi.org/project/pvliesdonk-reqeng-mcp/) [![Python](https://img.shields.io/pypi/pyversions/pvliesdonk-reqeng-mcp)](https://pypi.org/project/pvliesdonk-reqeng-mcp/) [![License](https://img.shields.io/github/license/pvliesdonk/reqeng-mcp)](LICENSE) [![Docker](https://img.shields.io/github/v/release/pvliesdonk/reqeng-mcp?label=ghcr.io&logo=docker)](https://github.com/pvliesdonk/reqeng-mcp/pkgs/container/reqeng-mcp) [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://pvliesdonk.github.io/reqeng-mcp/) [![llms.txt](https://img.shields.io/badge/llms.txt-available-brightgreen)](https://pvliesdonk.github.io/reqeng-mcp/llms.txt)
+[![CI](https://github.com/pvliesdonk/reqeng-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pvliesdonk/reqeng-mcp/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/pvliesdonk/reqeng-mcp/graph/badge.svg)](https://codecov.io/gh/pvliesdonk/reqeng-mcp) [![PyPI](https://img.shields.io/pypi/v/pvliesdonk-reqeng-mcp)](https://pypi.org/project/pvliesdonk-reqeng-mcp/) [![Python](https://img.shields.io/pypi/pyversions/pvliesdonk-reqeng-mcp)](https://pypi.org/project/pvliesdonk-reqeng-mcp/) [![License](https://img.shields.io/github/license/pvliesdonk/reqeng-mcp)](LICENSE) [![Docker](https://img.shields.io/github/v/release/pvliesdonk/reqeng-mcp?label=ghcr.io&logo=docker)](https://github.com/pvliesdonk/reqeng-mcp/pkgs/container/reqeng-mcp) [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://pvliesdonk.github.io/reqeng-mcp/) [![llms.txt](https://img.shields.io/badge/llms.txt-available-brightgreen)](https://pvliesdonk.github.io/reqeng-mcp/llms.txt) [![Template](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/pvliesdonk/reqeng-mcp/main/.copier-answers.yml&query=%24._commit&label=template)](https://github.com/pvliesdonk/fastmcp-server-template)
 
 MCP server for requirements engineering workflows (StrictDoc-backed).
 
@@ -88,6 +88,10 @@ reqeng-mcp serve --transport http --port 8000   # streamable HTTP
 ```
 
 For library usage (embedding the domain logic without the MCP transport), import from the `reqeng_mcp` package directly — see the project's domain modules under `src/reqeng_mcp/` for entry points.
+
+### Server info
+
+The server registers a built-in `get_server_info` tool (via `fastmcp_pvl_core.register_server_info_tool`) so operators can confirm the deployed version with a single MCP call. The default response carries `server_name`, `server_version`, and `core_version`. Servers that talk to a remote upstream wire upstream version reporting inside the `DOMAIN-UPSTREAM-START` / `DOMAIN-UPSTREAM-END` sentinel in `src/reqeng_mcp/server.py` — see [`CLAUDE.md`](CLAUDE.md#server-info-tool-get_server_info) for the wiring pattern.
 
 ## Configuration
 
