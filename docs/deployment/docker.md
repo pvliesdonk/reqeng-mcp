@@ -16,6 +16,8 @@ The server listens on port 8000 with HTTP transport by default.
 | `REQENG_MCP_BEARER_TOKEN` | — | Enable bearer token auth |
 | `REQENG_MCP_LOG_LEVEL` | `INFO` | Log level |
 | `REQENG_MCP_INSTRUCTIONS` | (dynamic) | System instructions for LLM context |
+| `REQENG_MCP_DEBUG_PORT` | — | Remote-debugger TCP port (see [Remote debugging](#remote-debugging); requires `--build-arg DEBUG=true` image) |
+| `REQENG_MCP_DEBUG_WAIT` | `false` | Block startup until IDE attaches (see [Remote debugging](#remote-debugging)) |
 
 For OIDC auth variables, see [Authentication](../guides/authentication.md).
 
@@ -30,3 +32,61 @@ For OIDC auth variables, see [Authentication](../guides/authentication.md).
 
 Set `PUID` and `PGID` in your `.env` file to match the owner of bind-mounted
 directories (default 1000/1000).
+
+## Remote debugging
+
+Production images ship without `debugpy` to keep the image lean.  To attach a remote Python debugger from VS Code or PyCharm:
+
+1. **Build with the debug extra:**
+
+    ```bash
+    docker build --build-arg DEBUG=true -t reqeng-mcp:debug .
+    ```
+
+    This installs the `[debug]` optional-dependency group (which pulls `debugpy` transitively from `fastmcp-pvl-core`).  Default builds (`DEBUG=false`) skip it.
+
+2. **Run with the debug env vars set and the port mapped:**
+
+    ```bash
+    docker run --rm \
+      -e REQENG_MCP_DEBUG_PORT=5678 \
+      -e REQENG_MCP_DEBUG_WAIT=true \
+      -p 127.0.0.1:5678:5678 \
+      -p 8000:8000 \
+      reqeng-mcp:debug
+    ```
+
+    | Env var | Effect |
+    |---------|--------|
+    | `REQENG_MCP_DEBUG_PORT` | TCP port the debugger listens on (any value parsing to ``0`` disables; non-numeric or out-of-range values log a WARNING and the listener stays off) |
+    | `REQENG_MCP_DEBUG_WAIT` | When truthy (``1``/``true``/``yes``/``on``), block startup until the IDE attaches.  Default is non-blocking. |
+
+3. **Attach from VS Code** — add a launch config:
+
+    ```json
+    {
+      "name": "Attach to reqeng-mcp",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 }
+    }
+    ```
+
+    PyCharm uses *Run → Edit Configurations → Python Debug Server* with the same host/port.
+
+!!! danger "Never publish the debug port on a public network"
+    The debug listener binds `0.0.0.0` inside the container so the IDE can reach it from the host, but **debugpy's DAP protocol is unauthenticated** — any peer that can reach the port has arbitrary code execution as the server process.  Always bind the port mapping to localhost (`-p 127.0.0.1:5678:5678`) or tunnel via `kubectl port-forward` / SSH.  Production images should be built with default `DEBUG=false`.
+
+When the helper is invoked but `debugpy` isn't installed (e.g. someone sets `DEBUG_PORT` on a non-debug image), it logs a WARNING and continues — safe failure mode.
+
+
+<!-- DOMAIN-DOCKER-EXTRA-START -->
+<!-- Project-specific notes for Docker deployment; kept across copier update. -->
+
+## Project-specific notes
+
+<!-- Add domain-specific caveats here (e.g. "the /data/uploads volume must
+     be writable by UID Y", "container needs cap_add: SYS_PTRACE for
+     debugging tools"). Use sub-headings to organize if needed. -->
+
+<!-- DOMAIN-DOCKER-EXTRA-END -->

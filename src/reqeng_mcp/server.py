@@ -20,6 +20,7 @@ from fastmcp_pvl_core import (
     build_instructions,
     configure_logging_from_env,
     register_file_exchange,
+    register_server_info_tool,
     resolve_auth_mode,
     wire_middleware_stack,
 )
@@ -92,10 +93,50 @@ def make_server(
 
     wire_middleware_stack(mcp)
 
+    # Optional: enable opt-in per-subject authorization on tools / resources /
+    # prompts.  See fastmcp-pvl-core's README "Authorization" section for the
+    # design.  Tools, resources, and prompts opt in by setting
+    # ``meta={"required_scope": "<scope>"}``; absence of the key means
+    # unrestricted.  The middleware is only installed when ``acl_path`` is set.
+    #
+    # from fastmcp_pvl_core import (
+    #     AuthorizationMiddleware,
+    #     load_acl,
+    #     make_acl_authorizer,
+    # )
+    #
+    # if config.acl_path is not None:
+    #     authorizer = make_acl_authorizer(load_acl(config.acl_path))
+    #     mcp.add_middleware(AuthorizationMiddleware(authorizer=authorizer))
+
     register_tools(mcp)
     register_resources(mcp)
     register_prompts(mcp)
     register_apps(mcp)
+
+    register_server_info_tool(
+        mcp,
+        server_name="reqeng-mcp",
+        server_version=pkg_ver,
+        # DOMAIN-UPSTREAM-START — wire upstream version reporting for servers
+        # that talk to a remote service (paperless-mcp, etc.). The provider is
+        # a zero-arg callable; the simplest pattern is a module-level upstream
+        # client (typically constructed from env vars at import time) whose
+        # version method is referenced here. ``CurrentContext()`` is a FastMCP
+        # DI marker — it only resolves to a live context when used as a
+        # parameter default in a tool/resource handler, so it cannot be called
+        # directly from a zero-arg provider.
+        # Uncomment the kwargs below as additional arguments to this call:
+        # upstream_version=lambda: _upstream_client.remote_version(),
+        # upstream_label="paperless",
+        # DOMAIN-UPSTREAM-END
+    )
+
+    # DOMAIN-WIRING-START — project-specific wiring (custom HTTP routes,
+    # transforms, mode toggles, alternative middleware, additional registrations);
+    # kept across copier update. Leave empty for projects that don't customise
+    # make_server() beyond the standard scaffold.
+    # DOMAIN-WIRING-END
 
     # To publish files from a tool body, capture the returned handle
     # — see docs/guides/file-exchange.md for the module-level singleton
