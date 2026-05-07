@@ -16,7 +16,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
-    "fastmcp-pvl-core>=1.2.0,<2",
+    "fastmcp-pvl-core>=2.0.0,<3",
     "typer>=0.12",
     # PROJECT-DEPS-START — add domain dependencies below; kept across copier update
     # PROJECT-DEPS-END
@@ -24,6 +24,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # PROJECT-EXTRAS-START — add domain-specific optional-dependency groups below; kept across copier update
+# Pulls debugpy transitively via fastmcp-pvl-core's [debug] extra.  The
+# version range is inherited from the [project] dependency on
+# fastmcp-pvl-core above; pip resolves a single, consistent version.
+debug = ["fastmcp-pvl-core[debug]"]
 # PROJECT-EXTRAS-END
 
 # Tooling lives under PEP 735 [dependency-groups] (not [project.optional-dependencies])
@@ -78,6 +82,10 @@ ignore = ["E501"]
 # FastMCP dependency injection pattern — B008 is a false positive here.
 # Context/FastMCP/Service imports must stay runtime (not TYPE_CHECKING) for
 # DI resolution — TC001/TC002/TC003.
+# PROJECT-RUFF-IGNORES-START — replace, extend, or override the entries below
+# for your project's real source/test paths (split _server_apps.py into
+# per-domain modules, rename tests, add per-file overrides as needed); kept
+# across copier update.
 "src/reqeng_mcp/cli.py" = ["B008"]
 "src/reqeng_mcp/_server_deps.py" = ["B008", "TC002", "TC003"]
 "src/reqeng_mcp/_server_apps.py" = ["B008", "TC001", "TC002"]
@@ -87,7 +95,7 @@ ignore = ["E501"]
 "tests/conftest.py" = ["TC002", "TC003"]
 "tests/test_smoke.py" = ["TC002", "TC003"]
 "tests/test_tools.py" = ["TC002"]
-# Add project-specific overrides below as needed.
+# PROJECT-RUFF-IGNORES-END
 
 [tool.ruff.lint.isort]
 known-first-party = ["reqeng_mcp"]
