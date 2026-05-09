@@ -3420,10 +3420,10 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_project_succeeds(
-    mcp_client, tmp_spec_root, monkeypatch
-) -> None:
-    monkeypatch.setenv("REQENG_MCP_SPEC_ROOT", str(tmp_spec_root))
+async def test_create_project_succeeds(mcp_client, minimal_project) -> None:
+    # mcp_client is wired to minimal_project (the spec root containing
+    # the seed `minimal/` project). create_project lands the new project
+    # alongside it as `<minimal_project>/fresh/`.
     result = await mcp_client.call_tool(
         "create_project",
         {
@@ -3433,17 +3433,16 @@ async def test_create_project_succeeds(
     )
     data = result.data if hasattr(result, "data") else result
     assert data["project_id"] == "fresh"
-    fresh = tmp_spec_root / "fresh"
+    fresh = minimal_project / "fresh"
     assert (fresh / ".git").is_dir()
     assert (fresh / "strictdoc_config.py").is_file()
     assert (fresh / "grammar.sgra").is_file()
 
 
 @pytest.mark.asyncio
-async def test_create_project_rejects_empty_intent(
-    mcp_client, tmp_spec_root, monkeypatch
-) -> None:
-    monkeypatch.setenv("REQENG_MCP_SPEC_ROOT", str(tmp_spec_root))
+async def test_create_project_rejects_empty_intent(mcp_client) -> None:
+    # Intent validation fires before any filesystem access — no spec root
+    # fixture needed.
     with pytest.raises(Exception) as exc:
         await mcp_client.call_tool(
             "create_project", {"project_id": "x", "intent": ""}
@@ -3483,9 +3482,10 @@ async def test_create_project_rejects_duplicate(
     ],
 )
 async def test_create_project_rejects_malformed_project_id(
-    mcp_client, tmp_spec_root, monkeypatch, bad_id: str
+    mcp_client, bad_id: str
 ) -> None:
-    monkeypatch.setenv("REQENG_MCP_SPEC_ROOT", str(tmp_spec_root))
+    # Project-ID regex check fires before any filesystem access; no spec
+    # root fixture needed.
     with pytest.raises(Exception) as exc:
         await mcp_client.call_tool(
             "create_project",
