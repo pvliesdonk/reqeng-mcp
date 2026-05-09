@@ -921,7 +921,10 @@ class StrictDocBackend:
     def validate(self) -> list[ValidationFinding]:
         """Run StrictDoc's native validation; return our-typed findings."""
         try:
-            self._build_index()  # validation runs transitively
+            # get_index() reuses the cache when warm and populates it when
+            # cold — avoids the previous bug where _build_index() ran but
+            # discarded its result, forcing a rebuild on the next call.
+            self.get_index()
             return []
         except Exception as exc:
             logger.warning("validation_failed message=%s", exc)
@@ -1215,11 +1218,6 @@ Append to `src/reqeng_mcp/strictdoc_backend.py`:
 
     def export_markdown(self, output_dir: Path) -> Path:
         """Generate StrictDoc Markdown export. Returns the output directory."""
-        # StrictDoc's MD export class name varies; locate dynamically.
-        try:
-            from strictdoc.export.html2pdf.html2pdf_generator import HTML2PDFGenerator  # noqa: F401
-        except ImportError:
-            pass
         from strictdoc.export.html.html_generator import HTMLGenerator
         config = self._get_strictdoc_config()
         config.export_output_dir = str(output_dir)
@@ -1344,11 +1342,13 @@ def test_inline_grammar_in_document_takes_precedence(
     assert source.path == doc
 
 
-def test_resolve_creates_project_sgra_symlink_when_env_default(
+def test_resolve_materialises_project_sgra_when_env_default(
     tmp_path: Path,
 ) -> None:
-    """When env-default is in effect and project has no grammar.sgra, the resolver
-    materialises one (copy or symlink) so StrictDoc's IMPORT_FROM_FILE works.
+    """When env-default is in effect and project has no grammar.sgra, the
+    resolver materialises one (copy — not symlink, to avoid stale links
+    when the env-default file is replaced) so StrictDoc's IMPORT_FROM_FILE
+    works.
 
     This is the behaviour the substrate needs for projects to pick up a
     docker-mounted env-default automatically.
@@ -1362,6 +1362,10 @@ def test_resolve_creates_project_sgra_symlink_when_env_default(
     resolver.resolve(project_root)
     materialised = project_root / "grammar.sgra"
     assert materialised.exists()
+    # Resolver uses shutil.copy2 (not os.symlink) so docker bind-mount
+    # replacements update the bytes, not the link target.
+    assert not materialised.is_symlink(), \
+        "materialised grammar.sgra must be a copy, not a symlink"
     assert materialised.read_text() == custom.read_text()
 ```
 
@@ -2049,16 +2053,42 @@ from fastmcp import Client
 
 
 @pytest.fixture
-async def mcp_client(monkeypatch, tmp_spec_root):
-    """An in-process FastMCP client connected to a freshly-constructed server."""
-    monkeypatch.setenv("REQENG_MCP_SPEC_ROOT", str(tmp_spec_root))
-    # Import lazily so the env var takes effect
+async def mcp_client(monkeypatch, minimal_project):
+    """In-process FastMCP client wired to ``minimal_project`` as the spec root.
+
+    NOTE: Setting ``REQENG_MCP_SPEC_ROOT`` MUST happen before
+    ``make_server()`` runs — the lifespan reads it at startup. A late
+    ``monkeypatch.setenv`` in a test body has no effect because the server
+    has already started. The redundant ``monkeypatch.setenv`` calls in
+    Tasks 10-13 test bodies are idempotent (they set the same value) and
+    can be left in place or cleaned up sweep-wise.
+
+    All Phase 1 integration tests use this fixture: ``minimal_project`` is
+    a populated spec root, and the empty-root path is unit-tested directly
+    against ``FileSpecStore`` (see ``test_list_projects_empty`` near
+    line 565), not via the MCP layer.
+    """
+    monkeypatch.setenv("REQENG_MCP_SPEC_ROOT", str(minimal_project))
+    # Import lazily so the env var takes effect.
     from reqeng_mcp.server import make_server
 
     server = make_server(transport="stdio")
     async with Client(server) as client:
         yield client
 ```
+
+The fixtures use `async def` — pytest-asyncio's `auto` mode is what makes
+them work without a per-test `@pytest_asyncio.fixture` decorator. This is
+already configured in this project's `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+```
+
+Verify the line is present (it ships from the copier scaffold) — no change
+needed for Phase 1, but a missing entry would surface as confusing
+"async fixture not awaited" errors during integration testing.
 
 - [ ] **Step 5: Verify the smoke test still passes (regression check)**
 
@@ -2210,7 +2240,13 @@ def _register_orient(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> list[dict]:
-        """List .sdoc documents in the project."""
+        """List the .sdoc documents in the project.
+
+        Loop step: orient. Returns a list of ``{document, title}`` entries
+        identifying each .sdoc file under ``<project>/spec/``; the agent
+        uses this to pick a target document for ``get_document`` /
+        ``list_nodes``.
+        """
         resolved = _require_project(substrate, project_id)
         project_root = substrate.spec_store.get_project_path(resolved)
         spec_dir = project_root / "spec"
@@ -2240,7 +2276,12 @@ def _register_orient(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> str:
-        """Return the full .sdoc text of a document by filename."""
+        """Return the full .sdoc text of a document by filename.
+
+        Loop step: orient. Use sparingly — prefer ``list_nodes`` /
+        ``get_node`` for narrow reads. The full document text is useful
+        for global structural reasoning at session start.
+        """
         resolved = _require_project(substrate, project_id)
         project_root = substrate.spec_store.get_project_path(resolved)
         path = project_root / "spec" / doc
@@ -2415,7 +2456,12 @@ def _register_node_reads(mcp: FastMCP) -> None:
         include_relations: bool = False,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """Single-node read; full fields, optional relations expansion."""
+        """Read a single node, all fields, optional relations expansion.
+
+        Loop step: read narrow. Pass ``include_relations=True`` only when
+        the next decision depends on inbound/outbound links; otherwise the
+        narrower ``get_field`` is preferred for single-field reads.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         node = backend.get_index().get_node(uid)
@@ -2484,7 +2530,13 @@ def _register_node_reads(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> list[dict]:
-        """Inbound graph walk: 'what would break if I changed this'."""
+        """Inbound graph walk: "what would break if I changed this".
+
+        Loop step: trace dependents. Returns nodes pointing AT ``uid``,
+        bounded by ``depth`` (1-10). Use after a substantive write to
+        decide whether the change cascades; consider each dependent and
+        record a per-dependent intent if updates are needed.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         index = backend.get_index()
@@ -2517,7 +2569,12 @@ def _register_node_reads(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> list[dict]:
-        """Outbound graph walk."""
+        """Outbound graph walk: "what does this node depend on".
+
+        Loop step: trace dependencies. Returns nodes ``uid`` points AT,
+        bounded by ``depth`` (1-10). Use to chase upstream context when
+        the meaning of a leaf requirement isn't clear from its own fields.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         index = backend.get_index()
@@ -2702,7 +2759,12 @@ def _register_search_history(mcp: FastMCP) -> None:
         cursor: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """Full-text search across selected fields, optionally filtered by type."""
+        """Full-text search across selected fields, optionally filtered by type.
+
+        Loop step: locate. Wraps StrictDoc's search; returns paginated
+        ``{items, next_cursor}``. Use to find UIDs by free-text content
+        before the read-narrow / edit-narrow steps.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         all_nodes = backend.get_index().all_nodes()
@@ -2736,7 +2798,13 @@ def _register_search_history(mcp: FastMCP) -> None:
         role: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> list[dict]:
-        """Tabular relations export. Each row: source_uid, target, type, role."""
+        """Tabular relations export — one row per (source, target, type, role) tuple.
+
+        Loop step: trace. Useful for cross-cutting audit walks ("show me
+        every Refines link for SAFETY_REQUIREMENTs"). Filterable by type
+        and role; returns a list of dicts suitable for downstream tabular
+        rendering.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         index = backend.get_index()
@@ -2763,7 +2831,13 @@ def _register_search_history(mcp: FastMCP) -> None:
         limit: int = 20,
         substrate: Substrate = Depends(get_substrate),
     ) -> list[dict]:
-        """git log scoped to the node's source file."""
+        """git log scoped to the node's source file.
+
+        Loop step: read narrow (audit). Returns commit history for the
+        .sdoc file containing ``uid``, with optional ``since`` / ``until``
+        and ``limit`` bounds. Each entry carries the intent string from
+        the commit message — the load-bearing audit record.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         node = backend.get_index().get_node(uid)
@@ -2804,7 +2878,13 @@ def _register_search_history(mcp: FastMCP) -> None:
         limit: int | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> str | list[dict]:
-        """Unified diff of the node's file across refs or a time window."""
+        """Unified diff of the node's source file across refs or a time window.
+
+        Loop step: read narrow (audit). Returns the diff of the .sdoc
+        file containing ``uid`` between ``ref_or_since`` and ``until``;
+        with ``per_commit=True`` returns a list of per-commit diffs for
+        finer-grained inspection.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         node = backend.get_index().get_node(uid)
@@ -3304,7 +3384,13 @@ def _register_lifecycle(mcp: FastMCP) -> None:
         intent: str,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """Move project to <spec_root>/archived/<project_id>/; project becomes read-only."""
+        """Archive a project — move it to ``<spec_root>/archived/<project_id>/``.
+
+        Loop step: lifecycle. The project becomes read-only after
+        archival (no further writes accepted). ``intent`` is required and
+        is recorded as the final commit on the project's default branch
+        before the move.
+        """
         from reqeng_mcp.intent import validate_intent
 
         intent = validate_intent(intent)
@@ -3483,7 +3569,12 @@ def _register_exports(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """StrictDoc HTML export."""
+        """Export the project as a static HTML site.
+
+        Loop step: read. Phase 1 returns a server-local path dict
+        ``{"path": str(out)}``; spec §6.5 specifies the Phase 2 transition
+        to a ``file_ref`` shape via the file-exchange middleware.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         out = Path(tempfile.mkdtemp(prefix="reqeng-html-"))
@@ -3495,7 +3586,12 @@ def _register_exports(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """StrictDoc ReqIF export."""
+        """Export the project as ReqIF (Requirements Interchange Format).
+
+        Loop step: read. Phase 1 returns a server-local path dict; the
+        Phase 2 file-exchange transition (spec §6.5) lands when the
+        runtime handle is threaded onto the substrate.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         out = Path(tempfile.mkdtemp(prefix="reqeng-reqif-"))
@@ -3507,7 +3603,12 @@ def _register_exports(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """StrictDoc Excel export."""
+        """Export the project as Excel (xlsx).
+
+        Loop step: read. Phase 1 returns a server-local path dict; the
+        Phase 2 file-exchange transition (spec §6.5) lands when the
+        runtime handle is threaded onto the substrate.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         out = Path(tempfile.mkdtemp(prefix="reqeng-excel-"))
@@ -3519,7 +3620,12 @@ def _register_exports(mcp: FastMCP) -> None:
         project_id: str | None = None,
         substrate: Substrate = Depends(get_substrate),
     ) -> dict:
-        """StrictDoc Markdown export."""
+        """Export the project as a Markdown bundle.
+
+        Loop step: read. Phase 1 returns a server-local path dict; the
+        Phase 2 file-exchange transition (spec §6.5) lands when the
+        runtime handle is threaded onto the substrate.
+        """
         resolved = _require_project(substrate, project_id)
         backend = substrate.get_backend(resolved)
         out = Path(tempfile.mkdtemp(prefix="reqeng-md-"))
@@ -4314,7 +4420,7 @@ async def test_create_project_requires_intent(mcp_client) -> None:
 @pytest.mark.asyncio
 async def test_every_tool_has_docstring(mcp_client) -> None:
     tools = await mcp_client.list_tools()
-    short = [t.name for t in tools if not t.description or len(t.description) < 50]
+    short = [t.name for t in tools if not t.description or len(t.description) < 100]
     assert not short, f"tools with thin descriptions: {short}"
 ```
 
@@ -4366,6 +4472,11 @@ def test_reqif_export_importable() -> None:
 def test_project_config_importable() -> None:
     from strictdoc.core.project_config import ProjectConfig
     assert ProjectConfig is not None
+    # spec §5.2 names load_from_path_or_get_default as the only ProjectConfig
+    # entry point we use; verify it's still callable in the pinned version.
+    assert callable(
+        getattr(ProjectConfig, "load_from_path_or_get_default", None)
+    )
 
 
 def test_parallelizer_importable() -> None:
@@ -4695,7 +4806,7 @@ When PRs land, mark the corresponding tracking sub-issues closed and link the PR
 | §3.1 SpecStore + StrictDocBackend + GitStrategy | Tasks 2, 3, 4, 6, 7 |
 | §3.2 Mode S vs Mode H config | Task 8 |
 | §3.3 Composition root | Tasks 7, 9 |
-| §3.4 Key invariants | Phase 2 (intent-tagged commits); Phase 1 has read-only invariants enforced via tool annotations |
+| §3.4 Key invariants | Phase 1 covers the lifecycle slice: `create_project` validates `intent` and lands an initial intent-tagged commit (Task 14 Step 5). The full validate→write→commit pipeline for node mutations lands in Phase 2. Read-only tool annotations enforce the no-write invariant for read tools. |
 | §4.2 Default grammar | Task 1 |
 | §4.3 Resolution order | Task 5 |
 | §4.6 strictdoc_config.py | Task 14 (create_project generates it) |
